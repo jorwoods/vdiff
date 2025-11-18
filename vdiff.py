@@ -36,9 +36,9 @@ def get_commits(commits: Iterable[str]) -> list[str]:
     i = -1
     if isinstance(commits, str):
         commits = commits.split()
-    for i, commit in enumerate(commits):
+    for i, commit in enumerate(commits or []):
         if commit == "-" or commit == "'-'":
-            get_commits(sys.stdin.readlines())
+            hashes += get_commits(sys.stdin.readlines())
         if not (valid := COMMIT_HASH.match(commit)):
             continue
         else:
