@@ -9,7 +9,7 @@ import sys
 
 from textual.app import App
 from textual.containers import Horizontal
-from textual.widgets import ListItem, ListView, TextArea
+from textual.widgets import Label, ListItem, ListView, TextArea
 
 # Expect the start of each string/line to be a commit hash.
 COMMIT_HASH = re.compile(r"^([a-fA-F0-9]{5,40})\b")
@@ -49,24 +49,40 @@ def get_commits(commits: Iterable[str]) -> list[str]:
 
     return hashes
 
+@lru_cache()
+def get_patch(commit: str) -> str:
+    return shell(["git", "show", commit])
+
 
 
 class DiffList(ListView):
-    ...
+    def __init__(self, commits: Iterable[str]) -> None:
+        super().__init__()
+        self.commits = commits
+
+    def compose(self):
+        for commit in self.commits:
+            yield ListItem(Label(commit))
 
 class DiffStat(TextArea):
     ...
 
 class DiffViewer(App):
+    def __init__(self, commits: Iterable[str]):
+        super().__init__()
+        self.commits = commits
+
     def compose(self):
         yield Horizontal(
-                DiffList(),
+                DiffList(self.commits),
                 DiffStat(),
             )
 
 
 def main():
-    app = DiffViewer()
+    args = parse_args()
+    commits = get_commits(args.commits)
+    app = DiffViewer(commits)
     app.run()
 
 
