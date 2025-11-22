@@ -7,6 +7,9 @@ import shlex
 import subprocess
 import sys
 
+from pygments import highlight
+from pygments.lexers.diff import DiffLexer
+from pygments.formatters import TerminalFormatter
 from textual.app import App
 from textual.containers import Horizontal
 from textual.message import Message
@@ -96,7 +99,8 @@ class DiffViewer(App):
         print("update_diff_stat called for commit:", commit)
         patch = get_patch(commit)
         print("update_diff_stat called for patch:", patch[:50])
-        self.diff_stat.text = patch
+        highlighted_patch = highlight(patch, DiffLexer(), TerminalFormatter())
+        self.diff_stat.text = highlighted_patch
 
     def on_diff_list_highlight(self, message: DiffList.Highlight) -> None:
         self.commit = message.commit
