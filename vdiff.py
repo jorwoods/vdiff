@@ -72,13 +72,13 @@ class DiffList(ListView):
         for commit in self.commits:
             yield ListItem(Label(commit))
 
-    def on_highlighted(self, index: int):
-        print("on_highlight called for idx:", index)
-        self.selected_index = index
-        self.post_message(self.Highlight(self.commits[index]))
-        if self.on_select:
-            self.on_select(self.commits[index])
-
+    def on_list_view_highlighted(self, message: ListView.Highlighted):
+        item = message.item
+        if item is None:
+            return
+        if isinstance(item.children[0], Label):
+            commit = str(item.children[0].content)
+        self.post_message(self.Highlight(commit))
 
 
 class DiffStat(TextArea):
