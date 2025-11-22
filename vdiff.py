@@ -9,6 +9,7 @@ import sys
 
 from textual.app import App
 from textual.containers import Horizontal
+from textual.message import Message
 from textual.widgets import Label, ListItem, ListView, TextArea
 
 # Expect the start of each string/line to be a commit hash.
@@ -56,26 +57,56 @@ def get_patch(commit: str) -> str:
 
 
 class DiffList(ListView):
-    def __init__(self, commits: Iterable[str]) -> None:
+    def __init__(self, commits: Iterable[str], on_select=None) -> None:
         super().__init__()
-        self.commits = commits
+        self.commits = list(commits)
+        self.on_select = on_select
+        self.selected_index = 0
+
+    class Highlight(Message):
+        def __init__(self, commit: str) -> None:
+            self.commit = commit
+            super().__init__()
 
     def compose(self):
         for commit in self.commits:
             yield ListItem(Label(commit))
 
+    def on_highlighted(self, index: int):
+        print("on_highlight called for idx:", index)
+        self.selected_index = index
+        self.post_message(self.Highlight(self.commits[index]))
+        if self.on_select:
+            self.on_select(self.commits[index])
+
+
+
 class DiffStat(TextArea):
+    def __init__(self, value: str = ""):
+        super().__init__(text=value, read_only=True)
     ...
 
 class DiffViewer(App):
     def __init__(self, commits: Iterable[str]):
         super().__init__()
-        self.commits = commits
+        self.diff_stat = DiffStat()
+        self.diff_list = DiffList(commits, on_select=self.update_diff_stat)
+
+    def update_diff_stat(self, commit: str):
+        print("update_diff_stat called for commit:", commit)
+        patch = get_patch(commit)
+        print("update_diff_stat called for patch:", patch[:50])
+        self.diff_stat.text = patch
+
+    def on_diff_list_highlight(self, message: DiffList.Highlight) -> None:
+        self.commit = message.commit
+        self.update_diff_stat(self.commit)
+
 
     def compose(self):
         yield Horizontal(
-                DiffList(self.commits),
-                DiffStat(),
+                self.diff_list,
+                self.diff_stat,
             )
 
 
