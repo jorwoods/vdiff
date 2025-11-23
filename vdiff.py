@@ -1,31 +1,20 @@
 #!/usr/bin/env python
-import argparse
 from collections.abc import Iterable, Sequence
 from functools import lru_cache
 import re
 import shlex
 import subprocess
-import sys
 
 from pygments import highlight
 from pygments.lexers.diff import DiffLexer
 from pygments.formatters import TerminalFormatter
 from textual.app import App
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Footer, Header, Label, ListItem, ListView, TextArea
+from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, TextArea
 
 # Expect the start of each string/line to be a commit hash.
 COMMIT_HASH = re.compile(r"^([a-fA-F0-9]{5,40})\b")
-
-def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
-    if args is None:
-        args = sys.argv[1:]
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--commits", "-c", nargs="+", help="Git commits to display. Pass '-' to read from stdin.")
-
-    return parser.parse_args(args)
 
 
 def shell(command: Sequence[str] | str) -> str:
@@ -37,20 +26,13 @@ def shell(command: Sequence[str] | str) -> str:
 
 def get_commits(commits: Iterable[str]) -> list[str]:
     hashes = []
-    i = -1
     if isinstance(commits, str):
         commits = commits.split()
-    for i, commit in enumerate(commits or []):
-        if commit == "-" or commit == "'-'":
-            hashes += get_commits(sys.stdin.readlines())
+    for commit in (commits or []):
         if not (valid := COMMIT_HASH.match(commit)):
             continue
         else:
             hashes.append(valid.group())
-
-    if i == -1:
-        hashes = shell("git log --pretty=%h").split()
-
     return hashes
 
 @lru_cache()
@@ -58,21 +40,15 @@ def get_patch(commit: str) -> str:
     return shell(["git", "show", commit])
 
 
-
 class DiffList(ListView):
-    def __init__(self, commits: Iterable[str]) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.commits = list(commits)
         self.selected_index = 0
 
     class Highlight(Message):
         def __init__(self, commit: str) -> None:
             self.commit = commit
             super().__init__()
-
-    def compose(self):
-        for commit in self.commits:
-            yield ListItem(Label(commit))
 
     def on_list_view_highlighted(self, message: ListView.Highlighted):
         item = message.item
@@ -82,6 +58,48 @@ class DiffList(ListView):
             commit = str(item.children[0].content)
         self.post_message(self.Highlight(commit))
 
+    def set_content(self, content:Iterable[str]) -> None:
+        self.clear()
+        self.extend([ListItem(Label(c)) for c in content])
+
+class GetDiffs(Horizontal):
+    def __init__(self) -> None:
+        super().__init__()
+        self.git_cmd = TextArea("git log")
+        self.go = Button("Get Diffs")
+
+    def compose(self):
+        yield self.git_cmd
+        yield self.go
+
+    class CommandRun(Message):
+        def __init__(self, value: Iterable[str]) -> None:
+            self.value = value
+            super().__init__()
+
+
+    def on_button_pressed(self, message: Button.Pressed) -> None:
+        cmd = self.git_cmd.text
+        if "--pretty" not in cmd:
+            cmd = f"{cmd} --pretty=%h"
+        cmd_out = shell(shlex.split(cmd)).splitlines()
+        commits = get_commits(cmd_out)
+        self.post_message(self.CommandRun(commits))
+
+
+class GitInfo(Vertical):
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_diffs = GetDiffs()
+        self.diff_list = DiffList()
+
+    def compose(self):
+        yield self.get_diffs
+        yield self.diff_list
+
+    def on_get_diffs_command_run(self, message: GetDiffs.CommandRun) -> None:
+        self.diff_list.set_content(message.value)
+
 
 class DiffStat(TextArea):
     def __init__(self, value: str = ""):
@@ -89,10 +107,10 @@ class DiffStat(TextArea):
     ...
 
 class DiffViewer(App):
-    def __init__(self, commits: Iterable[str]):
+    def __init__(self):
         super().__init__()
         self.diff_stat = DiffStat()
-        self.diff_list = DiffList(commits)
+        self.git_info = GitInfo()
 
     def update_diff_stat(self, commit: str):
         print("update_diff_stat called for commit:", commit)
@@ -109,16 +127,14 @@ class DiffViewer(App):
     def compose(self):
         yield Header()
         yield Horizontal(
-                self.diff_list,
+                self.git_info,
                 self.diff_stat,
             )
         yield Footer()
 
 
 def main():
-    args = parse_args()
-    commits = get_commits(args.commits)
-    app = DiffViewer(commits)
+    app = DiffViewer()
     app.run()
 
 
