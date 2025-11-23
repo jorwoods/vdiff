@@ -60,10 +60,9 @@ def get_patch(commit: str) -> str:
 
 
 class DiffList(ListView):
-    def __init__(self, commits: Iterable[str], on_select=None) -> None:
+    def __init__(self, commits: Iterable[str]) -> None:
         super().__init__()
         self.commits = list(commits)
-        self.on_select = on_select
         self.selected_index = 0
 
     class Highlight(Message):
@@ -93,7 +92,7 @@ class DiffViewer(App):
     def __init__(self, commits: Iterable[str]):
         super().__init__()
         self.diff_stat = DiffStat()
-        self.diff_list = DiffList(commits, on_select=self.update_diff_stat)
+        self.diff_list = DiffList(commits)
 
     def update_diff_stat(self, commit: str):
         print("update_diff_stat called for commit:", commit)
