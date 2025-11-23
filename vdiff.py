@@ -13,7 +13,7 @@ from pygments.formatters import TerminalFormatter
 from textual.app import App
 from textual.containers import Horizontal
 from textual.message import Message
-from textual.widgets import Label, ListItem, ListView, TextArea
+from textual.widgets import Footer, Header, Label, ListItem, ListView, TextArea
 
 # Expect the start of each string/line to be a commit hash.
 COMMIT_HASH = re.compile(r"^([a-fA-F0-9]{5,40})\b")
@@ -107,10 +107,12 @@ class DiffViewer(App):
 
 
     def compose(self):
+        yield Header()
         yield Horizontal(
                 self.diff_list,
                 self.diff_stat,
             )
+        yield Footer()
 
 
 def main():
