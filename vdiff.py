@@ -42,7 +42,7 @@ def get_patch(commit: str) -> str:
 
 class DiffList(ListView):
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(id="diff_list")
         self.selected_index = 0
 
     class Highlight(Message):
@@ -64,9 +64,9 @@ class DiffList(ListView):
 
 class GetDiffs(Horizontal):
     def __init__(self) -> None:
-        super().__init__()
-        self.git_cmd = TextArea("git log")
-        self.go = Button("Get Diffs")
+        super().__init__(id="input_area")
+        self.git_cmd = TextArea("git log", id="git_cmd")
+        self.go = Button("Get Diffs", id="go_button")
 
     def compose(self):
         yield self.git_cmd
@@ -89,28 +89,28 @@ class GetDiffs(Horizontal):
 
 class GitInfo(Vertical):
     def __init__(self) -> None:
-        super().__init__()
-        self.get_diffs = GetDiffs()
+        super().__init__(id="git_info")
+        # self.get_diffs = GetDiffs()
         self.diff_list = DiffList()
 
     def compose(self):
-        yield self.get_diffs
+        # yield self.get_diffs
         yield self.diff_list
-
-    def on_get_diffs_command_run(self, message: GetDiffs.CommandRun) -> None:
-        self.diff_list.set_content(message.value)
-
 
 class DiffStat(TextArea):
     def __init__(self, value: str = ""):
-        super().__init__(text=value, read_only=True)
-    ...
+        super().__init__(text=value, read_only=True, id="diff_stat")
 
 class DiffViewer(App):
+    # CSS_PATH = "vdiff.tcss"
+    BINDINGS = [
+        ("^enter", "get_diffs", "Get Diffs"),
+    ]
     def __init__(self):
         super().__init__()
         self.diff_stat = DiffStat()
         self.git_info = GitInfo()
+        self.get_diffs = GetDiffs()
 
     def update_diff_stat(self, commit: str):
         print("update_diff_stat called for commit:", commit)
@@ -123,14 +123,22 @@ class DiffViewer(App):
         self.commit = message.commit
         self.update_diff_stat(self.commit)
 
+    def on_get_diffs_command_run(self, message: GetDiffs.CommandRun) -> None:
+        self.git_info.diff_list.set_content(message.value)
+
+    def action_get_diffs(self) -> None:
+        self.get_diffs.go.press()
+
 
     def compose(self):
-        yield Header()
+        yield Header(id="header")
+        yield self.get_diffs
         yield Horizontal(
                 self.git_info,
                 self.diff_stat,
+                id="main"
             )
-        yield Footer()
+        yield Footer(id="footer")
 
 
 def main():
