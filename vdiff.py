@@ -8,8 +8,9 @@ import subprocess
 from pygments import highlight
 from pygments.lexers.diff import DiffLexer
 from pygments.formatters import TerminalFormatter
+from textual import events
 from textual.app import App
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, TextArea
 
@@ -62,10 +63,21 @@ class DiffList(ListView):
         self.clear()
         self.extend([ListItem(Label(c)) for c in content])
 
+class GitCommand(TextArea):
+    def __init__(self, value: str = "git log"):
+        super().__init__(text=value, id="git_command")
+
+    class CtrlEnter(Message):
+        pass
+
+    def _on_key(self, event: events.Key) -> None:  # type: ignore[override]
+        if event.key == "enter":
+            self.post_message(self.CtrlEnter())
+
 class GetDiffs(Horizontal):
     def __init__(self) -> None:
         super().__init__(id="input_area")
-        self.git_cmd = TextArea("git log", id="git_cmd")
+        self.git_cmd = GitCommand()
         self.go = Button("Get Diffs", id="go_button")
 
     def compose(self):
@@ -86,30 +98,19 @@ class GetDiffs(Horizontal):
         commits = get_commits(cmd_out)
         self.post_message(self.CommandRun(commits))
 
-
-class GitInfo(Vertical):
-    def __init__(self) -> None:
-        super().__init__(id="git_info")
-        # self.get_diffs = GetDiffs()
-        self.diff_list = DiffList()
-
-    def compose(self):
-        # yield self.get_diffs
-        yield self.diff_list
-
 class DiffStat(TextArea):
     def __init__(self, value: str = ""):
         super().__init__(text=value, read_only=True, id="diff_stat")
 
 class DiffViewer(App):
-    # CSS_PATH = "vdiff.tcss"
+    CSS_PATH = "vdiff.tcss"
     BINDINGS = [
         ("^enter", "get_diffs", "Get Diffs"),
     ]
     def __init__(self):
         super().__init__()
         self.diff_stat = DiffStat()
-        self.git_info = GitInfo()
+        self.diff_list = DiffList()
         self.get_diffs = GetDiffs()
 
     def update_diff_stat(self, commit: str):
@@ -124,9 +125,9 @@ class DiffViewer(App):
         self.update_diff_stat(self.commit)
 
     def on_get_diffs_command_run(self, message: GetDiffs.CommandRun) -> None:
-        self.git_info.diff_list.set_content(message.value)
+        self.diff_list.set_content(message.value)
 
-    def action_get_diffs(self) -> None:
+    def on_git_command_ctrl_enter(self, message: GitCommand.CtrlEnter) -> None:
         self.get_diffs.go.press()
 
 
@@ -134,7 +135,7 @@ class DiffViewer(App):
         yield Header(id="header")
         yield self.get_diffs
         yield Horizontal(
-                self.git_info,
+                self.diff_list,
                 self.diff_stat,
                 id="main"
             )
