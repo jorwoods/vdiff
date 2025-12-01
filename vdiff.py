@@ -16,6 +16,7 @@ from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, T
 
 # Expect the start of each string/line to be a commit hash.
 COMMIT_HASH = re.compile(r"^([a-fA-F0-9]{5,40})\b")
+STASH_ID = re.compile(r"^(stash@\{\d+\})")
 
 
 def shell(command: Sequence[str] | str) -> str:
@@ -25,20 +26,25 @@ def shell(command: Sequence[str] | str) -> str:
     return result.stdout
 
 
-def get_commits(commits: Iterable[str]) -> list[str]:
+def get_git_ids(commits: Iterable[str]) -> list[str]:
     hashes = []
     if isinstance(commits, str):
         commits = commits.split()
     for commit in (commits or []):
-        if not (valid := COMMIT_HASH.match(commit)):
+        id = next((valid for pattern in (COMMIT_HASH, STASH_ID) if (valid := pattern.match(commit))), None)
+        if id is None:
             continue
-        else:
-            hashes.append(valid.group())
+        hashes.append(id.group())
     return hashes
 
 @lru_cache()
 def get_patch(commit: str) -> str:
-    return shell(["git", "show", commit])
+    if COMMIT_HASH.match(commit):
+        return shell(["git", "show", commit])
+    elif STASH_ID.match(commit):
+        return shell(["git", "stash", "show", "-p", commit])
+    else:
+        raise ValueError(f"{commit} doesn't appear to be a valid commit or stash")
 
 
 class DiffList(ListView):
@@ -92,10 +98,12 @@ class GetDiffs(Horizontal):
 
     def on_button_pressed(self, message: Button.Pressed) -> None:
         cmd = self.git_cmd.text
-        if "--pretty" not in cmd:
+        if cmd.startswith("git stash"):
+            ...
+        elif "--pretty" not in cmd:
             cmd = f"{cmd} --pretty=%h"
         cmd_out = shell(shlex.split(cmd)).splitlines()
-        commits = get_commits(cmd_out)
+        commits = get_git_ids(cmd_out)
         self.post_message(self.CommandRun(commits))
 
 class DiffStat(TextArea):
