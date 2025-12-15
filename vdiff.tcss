@@ -1,7 +1,15 @@
 #input_area {
-    height: 3;
+    height: 6;
 }
 
 #diff_list{
     width: 20%;
+}
+
+#main_buttons {
+    width: 10%;
+}
+
+.build_cmd {
+    background: blue;
 }

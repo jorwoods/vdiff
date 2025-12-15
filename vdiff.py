@@ -4,13 +4,14 @@ from functools import lru_cache
 import re
 import shlex
 import subprocess
+from typing import Generator
 
 from pygments import highlight
 from pygments.lexers.diff import DiffLexer
 from pygments.formatters import TerminalFormatter
 from textual import events
 from textual.app import App
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, TextArea
 
@@ -80,23 +81,37 @@ class GitCommand(TextArea):
         if event.key == "enter":
             self.post_message(self.CtrlEnter())
 
+class CmdButtons(Vertical):
+    go = Button("Get Diffs", id="go_button")
+    def compose(self) -> Generator[Button, None, None]:
+        yield Button("Build cmd", id="build")
+        yield self.go
+
+
 class GetDiffs(Horizontal):
     def __init__(self) -> None:
         super().__init__(id="input_area")
         self.git_cmd = GitCommand()
-        self.go = Button("Get Diffs", id="go_button")
+        self.buttons = CmdButtons(id="main_buttons")
+        self.go = self.buttons.go
 
     def compose(self):
         yield self.git_cmd
-        yield self.go
+        yield self.buttons
 
     class CommandRun(Message):
         def __init__(self, value: Iterable[str]) -> None:
             self.value = value
             super().__init__()
 
+    class BuildCmd(Message):
+        ...
 
     def on_button_pressed(self, message: Button.Pressed) -> None:
+        if message.button.id == "build":
+            self.post_message(self.BuildCmd())
+            return
+
         cmd = self.git_cmd.text
         if cmd.startswith("git stash"):
             ...
@@ -105,6 +120,7 @@ class GetDiffs(Horizontal):
         cmd_out = shell(shlex.split(cmd)).splitlines()
         commits = get_git_ids(cmd_out)
         self.post_message(self.CommandRun(commits))
+
 
 class DiffStat(TextArea):
     def __init__(self, value: str = ""):
@@ -120,6 +136,7 @@ class DiffViewer(App):
         self.diff_stat = DiffStat()
         self.diff_list = DiffList()
         self.get_diffs = GetDiffs()
+        self.cmd_build = False
 
     def update_diff_stat(self, commit: str):
         print("update_diff_stat called for commit:", commit)
@@ -137,6 +154,13 @@ class DiffViewer(App):
 
     def on_git_command_ctrl_enter(self, message: GitCommand.CtrlEnter) -> None:
         self.get_diffs.go.press()
+
+    def on_get_diffs_build_cmd(self, message: GetDiffs.BuildCmd) -> None:
+        components = (self.diff_stat, self.diff_list, self.get_diffs)
+        action = "remove_class" if self.cmd_build else "add_class"
+        for component in components:
+            getattr(component, action)("build_cmd")
+        self.cmd_build = not self.cmd_build
 
 
     def compose(self):
