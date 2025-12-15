@@ -31,12 +31,20 @@ def get_git_ids(commits: Iterable[str]) -> list[str]:
     hashes = []
     if isinstance(commits, str):
         commits = commits.split()
-    for commit in (commits or []):
-        id = next((valid for pattern in (COMMIT_HASH, STASH_ID) if (valid := pattern.match(commit))), None)
+    for commit in commits or []:
+        id = next(
+            (
+                valid
+                for pattern in (COMMIT_HASH, STASH_ID)
+                if (valid := pattern.match(commit))
+            ),
+            None,
+        )
         if id is None:
             continue
         hashes.append(id.group())
     return hashes
+
 
 @lru_cache()
 def get_patch(commit: str) -> str:
@@ -66,9 +74,10 @@ class DiffList(ListView):
             commit = str(item.children[0].content)
         self.post_message(self.Highlight(commit))
 
-    def set_content(self, content:Iterable[str]) -> None:
+    def set_content(self, content: Iterable[str]) -> None:
         self.clear()
         self.extend([ListItem(Label(c)) for c in content])
+
 
 class GitCommand(TextArea):
     def __init__(self, value: str = "git log"):
@@ -81,8 +90,10 @@ class GitCommand(TextArea):
         if event.key == "enter":
             self.post_message(self.CtrlEnter())
 
+
 class CmdButtons(Vertical):
     go = Button("Get Diffs", id="go_button")
+
     def compose(self) -> Generator[Button, None, None]:
         yield Button("Build cmd", id="build")
         yield self.go
@@ -104,8 +115,7 @@ class GetDiffs(Horizontal):
             self.value = value
             super().__init__()
 
-    class BuildCmd(Message):
-        ...
+    class BuildCmd(Message): ...
 
     def on_button_pressed(self, message: Button.Pressed) -> None:
         if message.button.id == "build":
@@ -126,11 +136,13 @@ class DiffStat(TextArea):
     def __init__(self, value: str = ""):
         super().__init__(text=value, read_only=True, id="diff_stat")
 
+
 class DiffViewer(App):
     CSS_PATH = "vdiff.tcss"
     BINDINGS = [
         ("^enter", "get_diffs", "Get Diffs"),
     ]
+
     def __init__(self):
         super().__init__()
         self.diff_stat = DiffStat()
@@ -162,15 +174,10 @@ class DiffViewer(App):
             getattr(component, action)("build_cmd")
         self.cmd_build = not self.cmd_build
 
-
     def compose(self):
         yield Header(id="header")
         yield self.get_diffs
-        yield Horizontal(
-                self.diff_list,
-                self.diff_stat,
-                id="main"
-            )
+        yield Horizontal(self.diff_list, self.diff_stat, id="main")
         yield Footer(id="footer")
 
 
