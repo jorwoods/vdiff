@@ -38,11 +38,12 @@ def get_git_ids(commits: Iterable[str]) -> list[str]:
     return hashes
 
 @lru_cache()
-def get_patch(commit: str) -> str:
+def get_patch(commit: str, files: str) -> str:
+    files_cmd = f"-- {files}" if files else ""
     if COMMIT_HASH.match(commit):
-        return shell(["git", "show", commit])
+        return shell(["git", "show", commit, files_cmd])
     elif STASH_ID.match(commit):
-        return shell(["git", "stash", "show", "-p", commit])
+        return shell(["git", "stash", "show", "-p", commit, files_cmd])
     else:
         raise ValueError(f"{commit} doesn't appear to be a valid commit or stash")
 
@@ -101,10 +102,19 @@ class GetDiffs(Horizontal):
         if cmd.startswith("git stash"):
             ...
         elif "--pretty" not in cmd:
+            cmd, _, files = cmd.partition("-- ")
             cmd = f"{cmd} --pretty=%h"
-        cmd_out = shell(shlex.split(cmd)).splitlines()
-        commits = get_git_ids(cmd_out)
-        self.post_message(self.CommandRun(commits))
+            if files:
+                cmd = f"{cmd} -- {files}"
+        try:
+            cmd_out = shell(shlex.split(cmd)).splitlines()
+            commits = get_git_ids(cmd_out)
+            self.post_message(self.CommandRun(commits))
+        except subprocess.CalledProcessError as e:
+            # Find the DiffStat widget in the parent app and display the error
+            app = self.app
+            if hasattr(app, "diff_stat"):
+                app.diff_stat.text = e.stderr or str(e)
 
 class DiffStat(TextArea):
     def __init__(self, value: str = ""):
@@ -123,7 +133,8 @@ class DiffViewer(App):
 
     def update_diff_stat(self, commit: str):
         print("update_diff_stat called for commit:", commit)
-        patch = get_patch(commit)
+        _, _, files = self.get_diffs.git_cmd.text.partition("-- ")
+        patch = get_patch(commit, files)
         print("update_diff_stat called for patch:", patch[:50])
         highlighted_patch = highlight(patch, DiffLexer(), TerminalFormatter())
         self.diff_stat.text = highlighted_patch
