@@ -12,3 +12,16 @@ dependencies = [
 dev = [
     "textual-dev>=1.8.0",
 ]
+
+[project.scripts]
+vdiff = "vdiff.vdiff:main"
+
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vdiff = ["*.tcss"]
