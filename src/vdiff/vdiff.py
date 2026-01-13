@@ -102,7 +102,7 @@ class GetDiffs(Horizontal):
         if cmd.startswith("git stash"):
             ...
         elif "--pretty" not in cmd:
-            cmd, _, files = cmd.partition("-- ")
+            cmd, _, files = [s.strip() for s in cmd.partition("-- ")]
             cmd = f"{cmd} --pretty=%h"
             if files:
                 cmd = f"{cmd} -- {files}"
@@ -133,7 +133,7 @@ class DiffViewer(App):
 
     def update_diff_stat(self, commit: str):
         print("update_diff_stat called for commit:", commit)
-        _, _, files = self.get_diffs.git_cmd.text.partition("-- ")
+        _, _, files = [s.strip() for s in self.get_diffs.git_cmd.text.partition("-- ")]
         patch = get_patch(commit, files)
         print("update_diff_stat called for patch:", patch[:50])
         highlighted_patch = highlight(patch, DiffLexer(), TerminalFormatter())
