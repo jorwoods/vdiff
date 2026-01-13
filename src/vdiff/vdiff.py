@@ -106,9 +106,15 @@ class GetDiffs(Horizontal):
             cmd = f"{cmd} --pretty=%h"
             if files:
                 cmd = f"{cmd} -- {files}"
-        cmd_out = shell(shlex.split(cmd)).splitlines()
-        commits = get_git_ids(cmd_out)
-        self.post_message(self.CommandRun(commits))
+        try:
+            cmd_out = shell(shlex.split(cmd)).splitlines()
+            commits = get_git_ids(cmd_out)
+            self.post_message(self.CommandRun(commits))
+        except subprocess.CalledProcessError as e:
+            # Find the DiffStat widget in the parent app and display the error
+            app = self.app
+            if hasattr(app, "diff_stat"):
+                app.diff_stat.text = e.stderr or str(e)
 
 class DiffStat(TextArea):
     def __init__(self, value: str = ""):
