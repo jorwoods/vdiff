@@ -21,7 +21,8 @@ STASH_ID = re.compile(r"^(stash@\{\d+\})")
 
 def shell(command: Sequence[str] | str) -> str:
     if isinstance(command, str):
-        command = shlex.split(command)
+        command = shlex.strip().split(command)
+    command = [c for c in command if c]
     result = subprocess.run(command, text=True, check=True, capture_output=True)
     return result.stdout
 
@@ -134,7 +135,11 @@ class DiffViewer(App):
     def update_diff_stat(self, commit: str):
         print("update_diff_stat called for commit:", commit)
         _, _, files = [s.strip() for s in self.get_diffs.git_cmd.text.partition("-- ")]
-        patch = get_patch(commit, files)
+        try:
+            patch = get_patch(commit, files)
+        except subprocess.CalledProcessError as e:
+            self.diff_stat.text = e.stderr or str(e)
+            return
         print("update_diff_stat called for patch:", patch[:50])
         highlighted_patch = highlight(patch, DiffLexer(), TerminalFormatter())
         self.diff_stat.text = highlighted_patch

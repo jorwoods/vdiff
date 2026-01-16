@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Cache files
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+.ruff_cache/
