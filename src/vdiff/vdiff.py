@@ -40,7 +40,7 @@ def get_git_ids(commits: Iterable[str]) -> list[str]:
 
 @lru_cache()
 def get_patch(commit: str, files: str) -> str:
-    files_cmd = ["-- ", shlex.split(files.strip())] if files else []
+    files_cmd = ["-- "] + shlex.split(files.strip()) if files else []
     if (matched := COMMIT_HASH.match(commit)):
         return shell(["git", "show", matched.group()] + files_cmd)
     elif STASH_ID.match(commit):
