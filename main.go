@@ -244,6 +244,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cmdInput.SetValue(m.gitCmd)
 				cmds = append(cmds, m.cmdInput.Focus())
 				handled = true
+			case "s":
+				m.status = "Running…"
+				m.err = nil
+				cmds = append(cmds, runGitCmd("git stash list"))
+				handled = true
 			}
 		}
 
@@ -310,7 +315,7 @@ func (m model) statusBar() string {
 		return infoStyle.Render(m.status)
 	}
 	if m.focus == listFocus {
-		return statusStyle.Render("j/k: navigate  /: filter  c: command  tab: diff pane  q: quit")
+		return statusStyle.Render("j/k: navigate  /: filter  s: stash  c: command  tab: diff pane  q: quit")
 	}
 	return statusStyle.Render("j/k: scroll  tab: list pane  q: quit")
 }
