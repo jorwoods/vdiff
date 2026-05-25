@@ -225,6 +225,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		m.status = ""
 
+	default:
+		// Forward internal list messages (e.g. FilterMatchesMsg, spinner ticks)
+		// so async filtering completes correctly.
+		var cmd tea.Cmd
+		m.commits, cmd = m.commits.Update(msg)
+		cmds = append(cmds, cmd)
+
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
