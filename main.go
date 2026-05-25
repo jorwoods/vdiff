@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -15,8 +16,8 @@ import (
 // ── commit item ───────────────────────────────────────────────────────────────
 
 type commitItem struct {
-	id      string // hash or stash ref
-	display string // full oneline string shown in the list
+	id      string
+	display string
 }
 
 func (c commitItem) Title() string       { return c.display }
@@ -26,23 +27,24 @@ func (c commitItem) FilterValue() string { return c.display }
 // ── styles ────────────────────────────────────────────────────────────────────
 
 var (
-	activeBorder = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("205"))
-	dimBorder = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("238"))
-
-	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	activeBorder   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("205"))
+	dimBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238"))
+	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	cmdPromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	infoStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
-	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	infoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
+	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 
+	// Diff syntax
 	addStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	delStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	hunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	metaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	fileStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+
+	// Diff overlays (applied on top of syntax styles)
+	visualSelStyle     = lipgloss.NewStyle().Background(lipgloss.Color("237"))         // dim gray bg
+	searchMatchStyle   = lipgloss.NewStyle().Background(lipgloss.Color("58"))          // dark amber
+	searchCurrentStyle = lipgloss.NewStyle().Background(lipgloss.Color("228")).Foreground(lipgloss.Color("16")) // bright yellow, black fg
 )
 
 // ── model ─────────────────────────────────────────────────────────────────────
@@ -50,8 +52,9 @@ var (
 type appMode int
 
 const (
-	normalMode appMode = iota
-	commandMode
+	normalMode  appMode = iota
+	commandMode         // typing a new git command
+	searchMode          // typing a search term in the diff
 )
 
 type focusedPane int
@@ -66,10 +69,25 @@ type model struct {
 	diff     viewport.Model
 	cmdInput textinput.Model
 
-	mode   appMode
-	focus  focusedPane
+	mode  appMode
+	focus focusedPane
+
 	gitCmd string
 	files  string
+
+	// Raw diff lines — needed to rebuild content on search/visual state changes.
+	rawLines []string
+
+	// Search state
+	searchInput   textinput.Model
+	searchTerm    string
+	searchMatches []int
+	searchIdx     int
+
+	// Visual-select state
+	visualActive bool
+	visualAnchor int // line where v was pressed
+	cursorLine   int // current cursor in visual mode
 
 	width  int
 	height int
@@ -87,7 +105,9 @@ type commitsMsg struct {
 	gitCmd   string
 }
 
-type diffMsg struct{ content string }
+// diffMsg carries raw (un-highlighted) lines so the model can re-render with
+// search and visual overlays applied.
+type diffMsg struct{ rawLines []string }
 type errMsg struct{ err error }
 
 // ── init ──────────────────────────────────────────────────────────────────────
@@ -98,10 +118,8 @@ func newModel() model {
 	d.SetHeight(1)
 	d.SetSpacing(0)
 	d.Styles.SelectedTitle = d.Styles.SelectedTitle.
-		Foreground(lipgloss.Color("205")).
-		BorderForeground(lipgloss.Color("205"))
-	d.Styles.NormalTitle = d.Styles.NormalTitle.
-		Foreground(lipgloss.Color("252"))
+		Foreground(lipgloss.Color("205")).BorderForeground(lipgloss.Color("205"))
+	d.Styles.NormalTitle = d.Styles.NormalTitle.Foreground(lipgloss.Color("252"))
 
 	l := list.New(nil, d, 0, 0)
 	l.Title = "git log"
@@ -109,20 +127,24 @@ func newModel() model {
 	l.SetFilteringEnabled(true)
 	l.SetShowStatusBar(true)
 	l.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	// Let our global handler own q and ctrl+c.
 	l.KeyMap.Quit.SetEnabled(false)
 	l.KeyMap.ForceQuit.SetEnabled(false)
 
-	ti := textinput.New()
-	ti.Placeholder = "e.g. git log --oneline -50"
-	ti.Prompt = ""
+	cmd := textinput.New()
+	cmd.Placeholder = "e.g. git log --oneline -50"
+	cmd.Prompt = ""
+
+	srch := textinput.New()
+	srch.Placeholder = "search…"
+	srch.Prompt = ""
 
 	return model{
-		commits:  l,
-		cmdInput: ti,
-		gitCmd:   "git log",
-		mode:     normalMode,
-		focus:    listFocus,
+		commits:     l,
+		cmdInput:    cmd,
+		searchInput: srch,
+		gitCmd:      "git log",
+		mode:        normalMode,
+		focus:       listFocus,
 	}
 }
 
@@ -130,7 +152,7 @@ func (m model) Init() tea.Cmd {
 	return runGitCmd("git log")
 }
 
-// ── sizing helpers ────────────────────────────────────────────────────────────
+// ── sizing ────────────────────────────────────────────────────────────────────
 
 func (m model) listOuterW() int {
 	if m.width == 0 {
@@ -147,8 +169,7 @@ func (m model) innerH() int {
 	if m.height < 5 {
 		return 1
 	}
-	// Terminal height minus: border top/bottom (2) + status bar (1).
-	return m.height - 3
+	return m.height - 3 // border top/bottom (2) + status bar (1)
 }
 
 // ── update ────────────────────────────────────────────────────────────────────
@@ -161,6 +182,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.cmdInput.Width = m.width - 8
+		m.searchInput.Width = m.width - 8
 		m.commits.SetSize(m.listInnerW(), m.innerH())
 		if !m.ready {
 			m.diff = viewport.New(m.diffInnerW(), m.innerH())
@@ -191,8 +213,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case diffMsg:
-		m.diff.SetContent(msg.content)
+		m.rawLines = msg.rawLines
+		m.searchMatches = findMatches(m.rawLines, m.searchTerm)
+		m.searchIdx = 0
+		m.visualActive = false
+		m.cursorLine = 0
 		m.diff.GotoTop()
+		m.diff.SetContent(buildDiffContent(m))
 
 	case errMsg:
 		m.err = msg.err
@@ -203,7 +230,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// ── command mode: all keys go to the input ─────────────────────────
+		// ── command mode ──────────────────────────────────────────────────────
 		if m.mode == commandMode {
 			switch msg.String() {
 			case "enter":
@@ -224,7 +251,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
-		// ── normal mode ────────────────────────────────────────────────────
+		// ── search mode ───────────────────────────────────────────────────────
+		if m.mode == searchMode {
+			switch msg.String() {
+			case "enter":
+				m.mode = normalMode
+				m.searchInput.Blur()
+				// Scroll to first match if any.
+				if len(m.searchMatches) > 0 {
+					scrollToLine(&m.diff, m.searchMatches[m.searchIdx])
+				}
+			case "esc":
+				m.mode = normalMode
+				m.searchInput.Blur()
+				m.searchTerm = ""
+				m.searchMatches = nil
+				m.searchIdx = 0
+				m.diff.SetContent(buildDiffContent(m))
+			default:
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				cmds = append(cmds, cmd)
+				// Live search: recompute matches and re-render as the user types.
+				m.searchTerm = m.searchInput.Value()
+				m.searchMatches = findMatches(m.rawLines, m.searchTerm)
+				m.searchIdx = 0
+				m.diff.SetContent(buildDiffContent(m))
+				if len(m.searchMatches) > 0 {
+					scrollToLine(&m.diff, m.searchMatches[0])
+				}
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+		// ── normal mode ───────────────────────────────────────────────────────
 		filtering := m.focus == listFocus && m.commits.FilterState() == list.Filtering
 		handled := false
 
@@ -245,10 +305,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.cmdInput.Focus())
 				handled = true
 			case "s":
-				m.status = "Running…"
-				m.err = nil
-				cmds = append(cmds, runGitCmd("git stash list"))
-				handled = true
+				if m.focus == listFocus {
+					m.status = "Running…"
+					m.err = nil
+					cmds = append(cmds, runGitCmd("git stash list"))
+					handled = true
+				}
 			}
 		}
 
@@ -264,15 +326,114 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cmds = append(cmds, loadDiff(item.id, m.files))
 					}
 				}
+
 			case diffFocus:
-				var cmd tea.Cmd
-				m.diff, cmd = m.diff.Update(msg)
-				cmds = append(cmds, cmd)
+				m, cmds = handleDiffKey(m, msg.String(), cmds)
 			}
 		}
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// handleDiffKey processes key events when the diff pane is focused.
+func handleDiffKey(m model, key string, cmds []tea.Cmd) (model, []tea.Cmd) {
+	switch key {
+
+	case "/":
+		m.mode = searchMode
+		m.searchInput.SetValue("")
+		cmds = append(cmds, m.searchInput.Focus())
+
+	case "n":
+		if len(m.searchMatches) > 0 {
+			m.searchIdx = (m.searchIdx + 1) % len(m.searchMatches)
+			m.diff.SetContent(buildDiffContent(m))
+			scrollToLine(&m.diff, m.searchMatches[m.searchIdx])
+		}
+
+	case "N":
+		if len(m.searchMatches) > 0 {
+			m.searchIdx = (m.searchIdx - 1 + len(m.searchMatches)) % len(m.searchMatches)
+			m.diff.SetContent(buildDiffContent(m))
+			scrollToLine(&m.diff, m.searchMatches[m.searchIdx])
+		}
+
+	case "d":
+		m.diff.HalfViewDown()
+
+	case "u":
+		m.diff.HalfViewUp()
+
+	case "v":
+		m.visualActive = !m.visualActive
+		if m.visualActive {
+			m.cursorLine = m.diff.YOffset
+			m.visualAnchor = m.cursorLine
+		}
+		m.diff.SetContent(buildDiffContent(m))
+
+	case "y":
+		if m.visualActive {
+			lo, hi := visualRange(m.visualAnchor, m.cursorLine, len(m.rawLines))
+			text := strings.Join(m.rawLines[lo:hi+1], "\n")
+			if err := clipboard.WriteAll(text); err != nil {
+				m.err = err
+			} else {
+				m.status = fmt.Sprintf("Copied %d lines", hi-lo+1)
+			}
+			m.visualActive = false
+			m.diff.SetContent(buildDiffContent(m))
+		}
+
+	case "esc":
+		if m.visualActive {
+			m.visualActive = false
+			m.diff.SetContent(buildDiffContent(m))
+		} else if m.searchTerm != "" {
+			m.searchTerm = ""
+			m.searchMatches = nil
+			m.searchIdx = 0
+			m.diff.SetContent(buildDiffContent(m))
+		}
+
+	case "j", "down":
+		if m.visualActive {
+			if m.cursorLine < len(m.rawLines)-1 {
+				m.cursorLine++
+				if m.cursorLine >= m.diff.YOffset+m.diff.Height {
+					m.diff.LineDown(1)
+				}
+				m.diff.SetContent(buildDiffContent(m))
+			}
+		} else {
+			var cmd tea.Cmd
+			m.diff, cmd = m.diff.Update(tea.KeyMsg{Type: tea.KeyDown})
+			cmds = append(cmds, cmd)
+		}
+
+	case "k", "up":
+		if m.visualActive {
+			if m.cursorLine > 0 {
+				m.cursorLine--
+				if m.cursorLine < m.diff.YOffset {
+					m.diff.LineUp(1)
+				}
+				m.diff.SetContent(buildDiffContent(m))
+			}
+		} else {
+			var cmd tea.Cmd
+			m.diff, cmd = m.diff.Update(tea.KeyMsg{Type: tea.KeyUp})
+			cmds = append(cmds, cmd)
+		}
+
+	default:
+		var cmd tea.Cmd
+		m.diff, cmd = m.diff.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		cmds = append(cmds, cmd)
+	}
+
+	return m, cmds
 }
 
 // ── view ──────────────────────────────────────────────────────────────────────
@@ -286,64 +447,155 @@ func (m model) View() string {
 	if m.focus == listFocus && m.mode == normalMode {
 		listBorder = activeBorder
 	}
-	listBox := listBorder.
-		Width(m.listInnerW()).Height(m.innerH()).
-		Render(m.commits.View())
+	listBox := listBorder.Width(m.listInnerW()).Height(m.innerH()).Render(m.commits.View())
 
 	diffBorder := dimBorder
-	if m.focus == diffFocus {
+	if m.focus == diffFocus && m.mode == normalMode {
 		diffBorder = activeBorder
 	}
-	diffBox := diffBorder.
-		Width(m.diffInnerW()).Height(m.innerH()).
-		Render(m.diff.View())
+	diffBox := diffBorder.Width(m.diffInnerW()).Height(m.innerH()).Render(m.diff.View())
 
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, listBox, diffBox)
-
-	bar := m.statusBar()
-	return lipgloss.JoinVertical(lipgloss.Left, panels, bar)
+	return lipgloss.JoinVertical(lipgloss.Left, panels, m.statusBar())
 }
 
 func (m model) statusBar() string {
-	if m.mode == commandMode {
+	switch m.mode {
+	case commandMode:
 		return cmdPromptStyle.Render("cmd: ") + m.cmdInput.View()
+	case searchMode:
+		suffix := ""
+		if m.searchTerm != "" {
+			if len(m.searchMatches) == 0 {
+				suffix = statusStyle.Render("  [no matches]")
+			} else {
+				suffix = statusStyle.Render(fmt.Sprintf("  [%d/%d]", m.searchIdx+1, len(m.searchMatches)))
+			}
+		}
+		return cmdPromptStyle.Render("/") + m.searchInput.View() + suffix
 	}
+
 	if m.err != nil {
 		return errStyle.Render("Error: " + m.err.Error())
 	}
 	if m.status != "" {
 		return infoStyle.Render(m.status)
 	}
+
 	if m.focus == listFocus {
-		return statusStyle.Render("j/k: navigate  /: filter  s: stash  c: command  tab: diff pane  q: quit")
+		return statusStyle.Render("j/k: navigate  /: filter  s: stash  c: command  tab: diff  q: quit")
 	}
-	return statusStyle.Render("j/k: scroll  tab: list pane  q: quit")
+	if m.visualActive {
+		lo, hi := visualRange(m.visualAnchor, m.cursorLine, len(m.rawLines))
+		return statusStyle.Render(fmt.Sprintf("VISUAL  %d lines  j/k: extend  y: copy  esc: cancel", hi-lo+1))
+	}
+	if m.searchTerm != "" && len(m.searchMatches) > 0 {
+		return statusStyle.Render(fmt.Sprintf("/%s  [%d/%d]  n/N: next/prev  esc: clear", m.searchTerm, m.searchIdx+1, len(m.searchMatches)))
+	}
+	return statusStyle.Render("j/k: scroll  d/u: half-page  /: search  v: visual  tab: list  q: quit")
 }
 
-// ── diff highlighting ─────────────────────────────────────────────────────────
+// ── diff rendering ────────────────────────────────────────────────────────────
 
-func highlightDiff(patch string) string {
+func buildDiffContent(m model) string {
+	return renderDiff(m.rawLines, m.searchTerm, m.searchMatches, m.searchIdx,
+		m.visualActive, m.visualAnchor, m.cursorLine)
+}
+
+func renderDiff(lines []string, searchTerm string, matches []int, matchIdx int,
+	visualActive bool, visualAnchor, cursorLine int) string {
+
+	matchSet := make(map[int]struct{}, len(matches))
+	for _, i := range matches {
+		matchSet[i] = struct{}{}
+	}
+	currentMatch := -1
+	if len(matches) > 0 {
+		currentMatch = matches[matchIdx]
+	}
+
+	visualLo, visualHi := visualAnchor, cursorLine
+	if visualLo > visualHi {
+		visualLo, visualHi = visualHi, visualLo
+	}
+
 	var sb strings.Builder
-	for _, line := range strings.Split(patch, "\n") {
+	for i, line := range lines {
+		style := diffLineStyle(line)
+
+		_, inMatchSet := matchSet[i]
 		switch {
-		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
-			sb.WriteString(fileStyle.Render(line))
-		case strings.HasPrefix(line, "+"):
-			sb.WriteString(addStyle.Render(line))
-		case strings.HasPrefix(line, "-"):
-			sb.WriteString(delStyle.Render(line))
-		case strings.HasPrefix(line, "@@"):
-			sb.WriteString(hunkStyle.Render(line))
-		case strings.HasPrefix(line, "diff ") || strings.HasPrefix(line, "index ") ||
-			strings.HasPrefix(line, "commit ") || strings.HasPrefix(line, "Author:") ||
-			strings.HasPrefix(line, "Date:") || strings.HasPrefix(line, "Merge:"):
-			sb.WriteString(metaStyle.Render(line))
-		default:
-			sb.WriteString(line)
+		case visualActive && i == cursorLine:
+			style = style.Reverse(true)
+		case visualActive && i >= visualLo && i <= visualHi:
+			style = visualSelStyle
+		case i == currentMatch:
+			style = searchCurrentStyle
+		case inMatchSet:
+			style = style.Inherit(searchMatchStyle)
 		}
+
+		sb.WriteString(style.Render(line))
 		sb.WriteByte('\n')
 	}
 	return sb.String()
+}
+
+func diffLineStyle(line string) lipgloss.Style {
+	switch {
+	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+		return fileStyle
+	case strings.HasPrefix(line, "+"):
+		return addStyle
+	case strings.HasPrefix(line, "-"):
+		return delStyle
+	case strings.HasPrefix(line, "@@"):
+		return hunkStyle
+	case strings.HasPrefix(line, "diff ") || strings.HasPrefix(line, "index ") ||
+		strings.HasPrefix(line, "commit ") || strings.HasPrefix(line, "Author:") ||
+		strings.HasPrefix(line, "Date:") || strings.HasPrefix(line, "Merge:"):
+		return metaStyle
+	default:
+		return lipgloss.NewStyle()
+	}
+}
+
+func findMatches(lines []string, term string) []int {
+	if term == "" {
+		return nil
+	}
+	lower := strings.ToLower(term)
+	var out []int
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(line), lower) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// scrollToLine centres lineIdx in the viewport.
+func scrollToLine(vp *viewport.Model, lineIdx int) {
+	offset := lineIdx - vp.Height/2
+	if offset < 0 {
+		offset = 0
+	}
+	vp.YOffset = offset
+}
+
+// visualRange returns the clamped [lo, hi] line indices of the current selection.
+func visualRange(anchor, cursor, nLines int) (int, int) {
+	lo, hi := anchor, cursor
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if hi >= nLines {
+		hi = nLines - 1
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	return lo, hi
 }
 
 // ── tea.Cmd factories ─────────────────────────────────────────────────────────
@@ -364,7 +616,7 @@ func loadDiff(commit, files string) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return diffMsg{highlightDiff(patch)}
+		return diffMsg{strings.Split(patch, "\n")}
 	}
 }
 
