@@ -40,32 +40,31 @@ func shell(args []string) (string, error) {
 	return string(out), nil
 }
 
-// processGitCommand normalises a git log/stash command, runs it, and returns
-// each line's ID (hash or stash ref) alongside the full display string.
-func processGitCommand(cmd string) (ids, displays []string, files, finalCmd string, err error) {
+// transformCmd normalises a user-supplied git command: it extracts any file
+// filter after "-- " and adds "--oneline" when no output format is specified.
+// Stash commands are returned unchanged. Both return values are trimmed.
+func transformCmd(cmd string) (finalCmd, files string) {
 	cmd = strings.TrimSpace(cmd)
-	finalCmd = cmd
-
-	if !strings.HasPrefix(cmd, "git stash") {
-		if idx := strings.Index(cmd, "-- "); idx != -1 {
-			files = strings.TrimSpace(cmd[idx+3:])
-			cmd = strings.TrimSpace(cmd[:idx])
-		}
-		if !strings.Contains(cmd, "--pretty") && !strings.Contains(cmd, "--oneline") && !strings.Contains(cmd, "--format") {
-			cmd += " --oneline"
-		}
-		if files != "" {
-			cmd += " -- " + files
-		}
-		finalCmd = cmd
+	if strings.HasPrefix(cmd, "git stash") {
+		return cmd, ""
 	}
-
-	out, err := shell(strings.Fields(cmd))
-	if err != nil {
-		return nil, nil, "", "", err
+	if idx := strings.Index(cmd, "-- "); idx != -1 {
+		files = strings.TrimSpace(cmd[idx+3:])
+		cmd = strings.TrimSpace(cmd[:idx])
 	}
+	if !strings.Contains(cmd, "--pretty") && !strings.Contains(cmd, "--oneline") && !strings.Contains(cmd, "--format") {
+		cmd += " --oneline"
+	}
+	if files != "" {
+		cmd += " -- " + files
+	}
+	return cmd, files
+}
 
-	for _, line := range strings.Split(out, "\n") {
+// parseOutput extracts commit hashes / stash refs and their display strings
+// from the raw text output of a git command.
+func parseOutput(output string) (ids, displays []string) {
+	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -81,6 +80,18 @@ func processGitCommand(cmd string) (ids, displays []string, files, finalCmd stri
 			displays = append(displays, line)
 		}
 	}
+	return
+}
+
+// processGitCommand normalises a git log/stash command, runs it, and returns
+// each line's ID (hash or stash ref) alongside the full display string.
+func processGitCommand(cmd string) (ids, displays []string, files, finalCmd string, err error) {
+	finalCmd, files = transformCmd(cmd)
+	out, err := shell(strings.Fields(finalCmd))
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	ids, displays = parseOutput(out)
 	return ids, displays, files, finalCmd, nil
 }
 
