@@ -1,7 +1,0 @@
-#input_area {
-    height: 3;
-}
-
-#diff_list{
-    width: 20%;
-}
