@@ -257,6 +257,30 @@ func TestSplitArgs(t *testing.T) {
 	}
 }
 
+// ── shell ─────────────────────────────────────────────────────────────────────
+
+func TestShellEmptyCommand(t *testing.T) {
+	_, err := shell(nil)
+	if err == nil || err.Error() != "empty command" {
+		t.Fatalf("want %q, got %v", "empty command", err)
+	}
+}
+
+// TestShellPreservesEmptyStringArgs asserts shell() forwards a deliberately
+// empty argument (e.g. the "" splitArgs produces for -G "") straight
+// through to exec.Command instead of stripping it. Stripping it would shift
+// every later argument left, letting -G swallow the next flag as its
+// pattern instead of erroring the way a real empty -G does.
+func TestShellPreservesEmptyStringArgs(t *testing.T) {
+	_, err := shell([]string{"git", "log", "-G", ""})
+	if err == nil {
+		t.Fatal("want git's empty-pattern error when \"\" reaches argv, got nil")
+	}
+	if !strings.Contains(err.Error(), "-G requires a non-empty argument") {
+		t.Errorf("want git's empty-pattern error, got: %v", err)
+	}
+}
+
 // ── processGitCommand / getPatch (call paths through splitArgs) ────────────────
 
 // runGit runs a git command against dir and fails the test on error.
@@ -342,6 +366,24 @@ func TestProcessGitCommandQuotedPickaxePattern(t *testing.T) {
 	}
 	if len(ids) != 0 {
 		t.Errorf("want 0 commits matching a non-existent quoted pattern, got %d: %v", len(ids), ids)
+	}
+}
+
+// TestProcessGitCommandEmptyQuotedArg guards against shell() silently
+// dropping a deliberately empty operand produced by splitArgs (e.g. the ""
+// in `-G ""`). Losing that empty string changes the exec.Command argv,
+// letting -G swallow the following flag as its pattern instead of failing
+// the way `git log -G ""` actually does.
+func TestProcessGitCommandEmptyQuotedArg(t *testing.T) {
+	dir, _ := newTestRepo(t)
+	chdir(t, dir)
+
+	_, _, _, _, err := processGitCommand(`git log -G ""`)
+	if err == nil {
+		t.Fatal("want an error from git for an empty -G pattern, got nil")
+	}
+	if !strings.Contains(err.Error(), "-G requires a non-empty argument") {
+		t.Errorf("want git's empty-pattern error, got: %v", err)
 	}
 }
 

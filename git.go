@@ -56,16 +56,10 @@ func splitArgs(s string) []string {
 }
 
 func shell(args []string) (string, error) {
-	var filtered []string
-	for _, a := range args {
-		if a != "" {
-			filtered = append(filtered, a)
-		}
-	}
-	if len(filtered) == 0 {
+	if len(args) == 0 {
 		return "", fmt.Errorf("empty command")
 	}
-	out, err := exec.Command(filtered[0], filtered[1:]...).Output()
+	out, err := exec.Command(args[0], args[1:]...).Output()
 	if err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
 			if stderr := strings.TrimSpace(string(e.Stderr)); stderr != "" {
