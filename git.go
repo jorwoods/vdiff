@@ -18,17 +18,48 @@ var (
 	cache   = map[string]string{}
 )
 
-func shell(args []string) (string, error) {
-	var filtered []string
-	for _, a := range args {
-		if a != "" {
-			filtered = append(filtered, a)
+// splitArgs tokenizes a command string into arguments, honoring single and
+// double quotes so that patterns with spaces (e.g. -G "foo bar") are passed
+// through as one argument rather than being torn apart on whitespace.
+func splitArgs(s string) []string {
+	var args []string
+	var cur strings.Builder
+	hasCur := false
+	quote := rune(0)
+
+	for _, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+			hasCur = true
+		case r == ' ' || r == '\t':
+			if hasCur {
+				args = append(args, cur.String())
+				cur.Reset()
+				hasCur = false
+			}
+		default:
+			cur.WriteRune(r)
+			hasCur = true
 		}
 	}
-	if len(filtered) == 0 {
+	if hasCur {
+		args = append(args, cur.String())
+	}
+	return args
+}
+
+func shell(args []string) (string, error) {
+	if len(args) == 0 {
 		return "", fmt.Errorf("empty command")
 	}
-	out, err := exec.Command(filtered[0], filtered[1:]...).Output()
+	out, err := exec.Command(args[0], args[1:]...).Output()
 	if err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
 			if stderr := strings.TrimSpace(string(e.Stderr)); stderr != "" {
@@ -87,7 +118,7 @@ func parseOutput(output string) (ids, displays []string) {
 // each line's ID (hash or stash ref) alongside the full display string.
 func processGitCommand(cmd string) (ids, displays []string, files, finalCmd string, err error) {
 	finalCmd, files = transformCmd(cmd)
-	out, err := shell(strings.Fields(finalCmd))
+	out, err := shell(splitArgs(finalCmd))
 	if err != nil {
 		return nil, nil, "", "", err
 	}
@@ -110,13 +141,13 @@ func getPatch(commit, files string) (string, error) {
 		args = []string{"git", "show", commit}
 		if files != "" {
 			args = append(args, "--")
-			args = append(args, strings.Fields(files)...)
+			args = append(args, splitArgs(files)...)
 		}
 	case stashRe.MatchString(commit):
 		args = []string{"git", "stash", "show", "-p", commit}
 		if files != "" {
 			args = append(args, "--")
-			args = append(args, strings.Fields(files)...)
+			args = append(args, splitArgs(files)...)
 		}
 	default:
 		return "", fmt.Errorf("%s: not a valid commit or stash ID", commit)
