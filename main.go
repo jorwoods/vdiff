@@ -42,8 +42,8 @@ var (
 	fileStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
 
 	// Diff overlays (applied on top of syntax styles)
-	visualSelStyle     = lipgloss.NewStyle().Background(lipgloss.Color("237"))         // dim gray bg
-	searchMatchStyle   = lipgloss.NewStyle().Background(lipgloss.Color("58"))          // dark amber
+	visualSelStyle     = lipgloss.NewStyle().Background(lipgloss.Color("237"))                                  // dim gray bg
+	searchMatchStyle   = lipgloss.NewStyle().Background(lipgloss.Color("58"))                                   // dark amber
 	searchCurrentStyle = lipgloss.NewStyle().Background(lipgloss.Color("228")).Foreground(lipgloss.Color("16")) // bright yellow, black fg
 )
 
